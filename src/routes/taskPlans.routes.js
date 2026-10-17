@@ -43,15 +43,25 @@ module.exports = (context) => {
     return { ok: true, work };
   };
 
-  const recomputeWorkProgress = async (workId) => {
+  const recomputeWorkProgress = async (workId, confirmed = false) => {
     const { rows } = await db.query(
       'SELECT ROUND(AVG(progress_percent))::int AS avg_percent, COUNT(*)::int AS total FROM "task_plans" WHERE work_id = $1',
       [workId],
     );
-    if (!rows.length || rows[0].total === 0) return;
+    const lastResult = await db.query(
+      'SELECT * FROM "task_plans" WHERE work_id = $1 ORDER BY step_order DESC, id DESC LIMIT 1', [workId],
+    );
+    const last = lastResult.rows[0];
+    const complete = Boolean(last && Number(last.progress_percent) === 100 && last.due_date);
     await db.query(
-      'UPDATE "digital_works" SET progress_percent = $1, updated_at = NOW() WHERE id = $2',
-      [rows[0].avg_percent, workId],
+      `UPDATE "digital_works" SET
+         progress_percent = CASE WHEN $3 AND ($4 OR workflow_status = 'completed') THEN 100 ELSE $1 END,
+         status = CASE WHEN $3 AND ($4 OR workflow_status = 'completed') THEN 2 ELSE CASE WHEN $1 > 0 THEN 1 ELSE 0 END END,
+         completed_at = CASE WHEN $3 AND ($4 OR workflow_status = 'completed') THEN $5::date ELSE NULL END,
+         workflow_status = CASE WHEN $3 AND ($4 OR workflow_status = 'completed') THEN 'completed'
+           WHEN workflow_status = 'completed' THEN 'in_progress' ELSE workflow_status END,
+         updated_at = NOW() WHERE id = $2`,
+      [rows[0]?.avg_percent || 0, workId, complete, confirmed, last?.due_date || null],
     );
   };
 
@@ -117,6 +127,18 @@ module.exports = (context) => {
         return res.status(400).json({ message: 'progress_percent must be between 0 and 100' });
       }
 
+      const lastResult = await db.query(
+        'SELECT id FROM "task_plans" WHERE work_id = $1 ORDER BY step_order DESC, id DESC LIMIT 1',
+        [existing.rows[0].work_id],
+      );
+      const isLast = lastResult.rows[0]?.id === id;
+      const nextProgress = progress_percent ?? (status === 'done' ? 100 : existing.rows[0].progress_percent);
+      const nextDate = due_date || existing.rows[0].due_date;
+      const completing = isLast && Number(nextProgress) === 100 && Number(existing.rows[0].progress_percent) !== 100;
+      if (completing && (req.body.confirm_completion !== true || !nextDate)) {
+        return res.status(400).json({ message: 'C?n ng?y ho?n th?nh v? x?c nh?n ho?n th?nh d? ?n.' });
+      }
+
       const { rows } = await db.query(
         `UPDATE "task_plans"
          SET step_name = COALESCE($1, step_name),
@@ -127,10 +149,12 @@ module.exports = (context) => {
              updated_at = NOW()
          WHERE id = $6
          RETURNING *`,
-        [step_name, step_order, status, due_date, progress_percent, id],
+        [step_name, step_order,
+          progress_percent !== undefined ? (Number(progress_percent) === 100 ? 'done' : Number(progress_percent) > 0 ? 'in_progress' : 'pending') : status,
+          due_date, status === 'done' ? 100 : progress_percent, id],
       );
 
-      await recomputeWorkProgress(rows[0].work_id);
+      await recomputeWorkProgress(rows[0].work_id, completing && req.body.confirm_completion === true);
       await logActivity(req, 'UPDATE_TASK_PLAN', id, existing.rows[0], rows[0]);
       return res.json(mapPlan(rows[0]));
     } catch (error) {

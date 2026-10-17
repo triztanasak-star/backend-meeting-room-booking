@@ -207,6 +207,19 @@ async function notifyWorkApproved(work, recipientEmails = []) {
   ]);
 }
 
+async function notifyWorkRejected(work) {
+  return sendTeamsMessage(
+    `Không duyệt dự án: ${work.task_name}`,
+    [
+      `Dự án: ${work.task_name}`,
+      `Nhà máy: ${work.factory_name || '—'}`,
+      'Trạng thái: Không duyệt',
+      `Lý do: ${work.rejection_reason}`,
+    ].join('\n'),
+    getAppUrl(),
+  );
+}
+
 async function notifyWorkInProgress(work) {
   const appUrl = getAppUrl();
   const title = `🚀 Dự án bắt đầu thực hiện: ${work.task_name}`;
@@ -272,6 +285,7 @@ module.exports = {
   sendTestEmail,
   notifyWorkCreated,
   notifyWorkApproved,
+  notifyWorkRejected,
   notifyWorkInProgress,
   notifyWorkCompleted,
 };

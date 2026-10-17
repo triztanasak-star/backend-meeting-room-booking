@@ -1,4 +1,5 @@
 const express = require('express');
+const validAvatar = require('../avatar');
 
 module.exports = (context) => {
   const router = express.Router();
@@ -24,7 +25,7 @@ module.exports = (context) => {
       const [countResult, rowsResult] = await Promise.all([
         db.query('SELECT COUNT(*)::int AS total FROM "users"'),
         db.query(
-          'SELECT id, name, email, role, status, created_at FROM "users" ORDER BY id DESC LIMIT $1 OFFSET $2',
+          'SELECT id, name, email, role, status, avatar_url, created_at FROM "users" ORDER BY id DESC LIMIT $1 OFFSET $2',
           [limit, offset],
         ),
       ]);
@@ -49,7 +50,7 @@ module.exports = (context) => {
       }
 
       const { rows } = await db.query(
-        'SELECT id, name, email, role, status, created_at FROM "users" WHERE id = $1',
+        'SELECT id, name, email, role, status, avatar_url, created_at FROM "users" WHERE id = $1',
         [targetId],
       );
       if (!rows.length) return res.status(404).json({ message: 'User not found' });
@@ -62,7 +63,8 @@ module.exports = (context) => {
   // Create user - Admin only (can set any role, incl. admin/manager)
   router.post('/api/users', authMiddleware, requireAdmin, async (req, res) => {
     try {
-      const { name, email, password, role } = req.body;
+      const { name, email, password, role, avatar_url } = req.body;
+      if (!validAvatar(avatar_url)) return res.status(400).json({ message: 'Invalid avatar image' });
       if (!name || !email || !password || !role) {
         return res.status(400).json({ message: 'Missing name, email, password or role' });
       }
@@ -72,10 +74,10 @@ module.exports = (context) => {
 
       const passwordHash = await bcrypt.hash(password, BCRYPT_ROUNDS);
       const { rows } = await db.query(
-        `INSERT INTO "users" (name, email, role, password_hash, status)
-         VALUES ($1, $2, $3, $4, 'active')
-         RETURNING id, name, email, role, status, created_at`,
-        [name, email, role, passwordHash],
+        `INSERT INTO "users" (name, email, role, password_hash, status, avatar_url)
+         VALUES ($1, $2, $3, $4, 'active', $5)
+         RETURNING id, name, email, role, status, avatar_url, created_at`,
+        [name, email, role, passwordHash, avatar_url || null],
       );
 
       await logActivity(req, 'CREATE_USER', rows[0].id, null, rows[0]);
@@ -111,7 +113,7 @@ module.exports = (context) => {
              role = COALESCE($3, role),
              status = COALESCE($4, status)
          WHERE id = $5
-         RETURNING id, name, email, role, status, created_at`,
+         RETURNING id, name, email, role, status, avatar_url, created_at`,
         [name, email, role, status, targetId],
       );
 
@@ -134,7 +136,7 @@ module.exports = (context) => {
 
       const { rows } = await db.query(
         `UPDATE "users" SET status = 'disabled' WHERE id = $1
-         RETURNING id, name, email, role, status, created_at`,
+         RETURNING id, name, email, role, status, avatar_url, created_at`,
         [targetId],
       );
 

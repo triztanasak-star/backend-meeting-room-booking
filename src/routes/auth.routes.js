@@ -1,4 +1,5 @@
 const express = require('express');
+const validAvatar = require('../avatar');
 
 module.exports = (context) => {
   const router = express.Router();
@@ -23,7 +24,8 @@ module.exports = (context) => {
   // Dang ky user moi - mac dinh role 'user'. Tao Admin/Manager phai qua users.routes (requireAdmin).
   router.post('/api/auth/register', authRateLimiter, async (req, res) => {
     try {
-      const { name, email, password } = req.body;
+      const { name, email, password, avatar_url } = req.body;
+      if (!validAvatar(avatar_url)) return res.status(400).json({ message: 'Invalid avatar image' });
       if (!name || !email || !password) {
         return res.status(400).json({ message: 'Missing name, email or password' });
       }
@@ -34,10 +36,10 @@ module.exports = (context) => {
       const passwordHash = await bcrypt.hash(password, BCRYPT_ROUNDS);
 
       const { rows } = await db.query(
-        `INSERT INTO "users" (name, email, role, password_hash, status)
-         VALUES ($1, $2, 'user', $3, 'active')
-         RETURNING id, name, email, role, status, created_at`,
-        [name, email, passwordHash],
+        `INSERT INTO "users" (name, email, role, password_hash, status, avatar_url)
+         VALUES ($1, $2, 'user', $3, 'active', $4)
+         RETURNING id, name, email, role, status, avatar_url, created_at`,
+        [name, email, passwordHash, avatar_url || null],
       );
 
       await logActivity(req, 'REGISTER', rows[0].id, null, rows[0]);
@@ -58,7 +60,7 @@ module.exports = (context) => {
       }
 
       const { rows } = await db.query(
-        'SELECT id, name, email, role, status, password_hash, created_at FROM "users" WHERE email = $1',
+        'SELECT id, name, email, role, status, avatar_url, password_hash, created_at FROM "users" WHERE email = $1',
         [email],
       );
       if (!rows.length) return res.status(401).json({ message: 'Invalid email or password' });
@@ -140,7 +142,7 @@ module.exports = (context) => {
   router.get('/api/auth/me', authMiddleware, async (req, res) => {
     try {
       const { rows } = await db.query(
-        'SELECT id, name, email, role, status, created_at FROM "users" WHERE id = $1',
+        'SELECT id, name, email, role, status, avatar_url, created_at FROM "users" WHERE id = $1',
         [req.user.id],
       );
       if (!rows.length) return res.status(404).json({ message: 'User not found' });

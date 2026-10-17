@@ -95,7 +95,7 @@ app.use(cors({
 app.options('/*splat', cors());
 
 // 3. Body parser
-app.use(express.json({ limit: process.env.JSON_LIMIT || '256kb' }));
+app.use(express.json({ limit: process.env.JSON_LIMIT || '1mb' }));
 
 // 4. Cookie parser
 app.use(cookieParser());
@@ -241,6 +241,7 @@ const sanitizeUser = (u) => ({
   $id: String(u.id),
   id: u.id,
   name: u.name,
+  avatar_url: u.avatar_url || null,
   email: u.email,
   role: u.role,
   status: u.status,

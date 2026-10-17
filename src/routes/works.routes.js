@@ -21,6 +21,7 @@ module.exports = (context) => {
     factory_name: row.factory_name,
     status: row.status,
     workflow_status: row.workflow_status,
+    rejection_reason: row.rejection_reason,
     priority: row.priority,
     progress_percent: row.progress_percent,
     expected_deadline: row.expected_deadline,
@@ -40,6 +41,7 @@ module.exports = (context) => {
     capex_amount: row.capex_amount !== null && row.capex_amount !== undefined ? Number(row.capex_amount) : null,
     estimated_saving_per_year: row.estimated_saving_per_year !== null && row.estimated_saving_per_year !== undefined
       ? Number(row.estimated_saving_per_year) : null,
+    saving_is_estimated: row.saving_is_estimated ?? (row.workflow_status !== 'completed'),
     payback_years: row.payback_years !== null && row.payback_years !== undefined ? Number(row.payback_years) : null,
     manager_comment: row.manager_comment,
     progress_comment: row.progress_comment,
@@ -298,6 +300,7 @@ module.exports = (context) => {
              estimated_saving_per_year = COALESCE($16, estimated_saving_per_year),
              payback_years = COALESCE($17, payback_years),
              workflow_status = COALESCE($18, workflow_status),
+             rejection_reason = CASE WHEN $18 = 'approved' THEN NULL ELSE rejection_reason END,
              updated_at = NOW()
          WHERE id = $19
          RETURNING *`,
@@ -342,6 +345,32 @@ module.exports = (context) => {
     }
   });
 
+  router.post('/api/works/:id/reject', authMiddleware, requireManagerOrAdmin, async (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      const reason = typeof req.body.reason === 'string' ? req.body.reason.trim() : '';
+      if (!reason || reason.length > 2000) return res.status(400).json({ message: 'Vui lòng nhập lý do không duyệt (tối đa 2000 ký tự).' });
+      const existing = await db.query('SELECT * FROM "digital_works" WHERE id = $1 AND is_deleted = false', [id]);
+      if (!existing.rows.length) return res.status(404).json({ message: 'Work not found' });
+      if (['in_progress', 'completed'].includes(existing.rows[0].workflow_status)) {
+        return res.status(409).json({ message: 'Không thể từ chối dự án đang thực hiện hoặc đã hoàn thành.' });
+      }
+      const { rows } = await db.query(
+        `UPDATE "digital_works" SET workflow_status = 'rejected', rejection_reason = $1, updated_at = NOW()
+         WHERE id = $2 AND is_deleted = false AND workflow_status NOT IN ('in_progress', 'completed') RETURNING *`,
+        [reason, id],
+      );
+      if (!rows.length) return res.status(409).json({ message: 'Trạng thái dự án đã thay đổi. Vui lòng tải lại.' });
+      await logActivity(req, 'REJECT_WORK', id, existing.rows[0], rows[0]);
+      let notificationSent = false;
+      try {
+        const result = await notificationService.notifyWorkRejected(rows[0]);
+        notificationSent = result?.ok === true;
+      } catch (error) { console.error('[works-reject-notify]', error); }
+      return res.json({ ...mapWork(rows[0]), notification_sent: notificationSent });
+    } catch (error) { return handleServerError(res, error, 'works-reject'); }
+  });
+
   // Cập nhật tiến độ
   router.patch('/api/works/:id/progress', authMiddleware, async (req, res) => {
     try {
@@ -358,8 +387,12 @@ module.exports = (context) => {
         status, progress_percent, progress_comment,
         manager_comment, rating, has_feedback, feedback_comment,
         capex_amount, estimated_saving_per_year, payback_years,
-        support_request, workflow_status,
+        support_request, workflow_status, saving_is_estimated,
       } = req.body;
+
+      if (saving_is_estimated !== undefined && typeof saving_is_estimated !== 'boolean') {
+        return res.status(400).json({ message: 'saving_is_estimated must be a boolean' });
+      }
 
       if (progress_percent !== undefined && (progress_percent < 0 || progress_percent > 100)) {
         return res.status(400).json({ message: 'progress_percent phải từ 0 đến 100' });
@@ -379,11 +412,10 @@ module.exports = (context) => {
       const nextHasFeedback = isReviewer ? has_feedback : work.has_feedback;
       const nextFeedbackComment = isReviewer ? feedback_comment : work.feedback_comment;
 
-      const completedAt = status !== undefined && Number(status) >= 2 ? new Date() : work.completed_at;
+      const completedAt = work.completed_at;
 
       // ✅ Tiến độ đạt 100% thì luôn tự động chuyển trạng thái quy trình sang "Hoàn thành"
-      const nextProgressPercent = progress_percent !== undefined ? Number(progress_percent) : work.progress_percent;
-      const nextWorkflowStatus = nextProgressPercent >= 100 ? 'completed' : (workflow_status || work.workflow_status);
+      const nextWorkflowStatus = work.completed_at ? 'completed' : (workflow_status === 'completed' ? work.workflow_status : (workflow_status || work.workflow_status));
 
       const { rows } = await db.query(
         `UPDATE "digital_works"
@@ -400,14 +432,15 @@ module.exports = (context) => {
              support_request = COALESCE($11, support_request),
              workflow_status = $12,
              completed_at = $13,
+             saving_is_estimated = COALESCE($15, saving_is_estimated),
              updated_at = NOW()
          WHERE id = $14
          RETURNING *`,
         [
-          status, progress_percent, progress_comment, nextManagerComment, nextRating,
+          completedAt ? 2 : status, completedAt ? 100 : progress_percent, progress_comment, nextManagerComment, nextRating,
           nextHasFeedback, nextFeedbackComment,
           capex_amount, estimated_saving_per_year, payback_years,
-          support_request, nextWorkflowStatus, completedAt, id
+          support_request, nextWorkflowStatus, completedAt, id, saving_is_estimated
         ],
       );
 
