@@ -35,6 +35,7 @@ module.exports = (context) => {
     project_id: row.project_id,
     assigned_to: row.assigned_to,
     assigned_to_name: row.assigned_to_name ?? null,
+    pic_users: row.pic_users ?? [],
     support_id: row.support_id,
     support_name: row.support_name ?? null,
     created_by: row.created_by,
@@ -54,7 +55,17 @@ module.exports = (context) => {
   });
 
   const worksQueryBase = `
-    SELECT dw.*, leader.name AS assigned_to_name, support.name AS support_name
+    SELECT dw.*, leader.name AS assigned_to_name, support.name AS support_name,
+      COALESCE((
+        SELECT json_agg(json_build_object('id', pic.id, 'name', pic.name, 'email', pic.email, 'avatar_url', pic.avatar_url) ORDER BY pic.id)
+        FROM "users" pic
+        WHERE EXISTS (
+          SELECT 1
+          FROM unnest(string_to_array(COALESCE(NULLIF(BTRIM(dw.lead_project), ''), leader.name, ''), ',')) AS names(value)
+          WHERE LOWER(BTRIM(names.value)) = LOWER(BTRIM(pic.name))
+             OR LOWER(BTRIM(names.value)) = LOWER(BTRIM(pic.email))
+        )
+      ), '[]'::json) AS pic_users
     FROM "digital_works" dw
     LEFT JOIN "users" leader ON leader.id = dw.assigned_to
     LEFT JOIN "users" support ON support.id = dw.support_id
