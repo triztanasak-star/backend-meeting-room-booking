@@ -24,6 +24,7 @@ module.exports = (context) => {
     rejection_reason: row.rejection_reason,
     priority: row.priority,
     progress_percent: row.progress_percent,
+    progress_increased_at: row.progress_increased_at ?? null,
     expected_deadline: row.expected_deadline,
     desired_deadline: row.desired_deadline,
     completed_at: row.completed_at,
