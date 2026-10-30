@@ -1,0 +1,1 @@
+ALTER TABLE meeting_rooms ADD COLUMN IF NOT EXISTS image TEXT;

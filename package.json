@@ -1,5 +1,5 @@
 {
-  "name": "digital_work_backend",
+  "name": "meeting-room-booking-backend",
   "version": "1.0.0",
   "engines": {
     "node": ">=20.0.0"
@@ -8,7 +8,10 @@
   "main": "src/server.js",
   "scripts": {
     "dev": "nodemon src/server.js",
-    "start": "node src/server.js"
+    "start": "node src/server.js",
+    "migrate": "node scripts/migrateMeetings.js",
+    "test": "node --test test/bookingRules.test.js",
+    "test:integration": "node --test test/meetingPostgres.test.js"
   },
   "dependencies": {
     "bcrypt": "^6.0.0",

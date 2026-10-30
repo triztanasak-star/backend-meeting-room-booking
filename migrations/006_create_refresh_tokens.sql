@@ -1,4 +1,4 @@
--- 005_create_refresh_tokens.sql
+-- 006_create_refresh_tokens.sql
 -- Luu hash cua refresh token de co the thu hoi (logout, doi mat khau, phat hien token bi lo).
 
 CREATE TABLE IF NOT EXISTS "refresh_tokens" (

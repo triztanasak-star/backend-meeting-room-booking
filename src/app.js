@@ -1,4 +1,4 @@
-require('dotenv').config();
+require('dotenv').config({ path: require('node:path').join(__dirname, '../.env') });
 const express = require('express');
 const cors = require('cors');
 const cookieParser = require('cookie-parser');
@@ -276,10 +276,7 @@ const context = {
 // 5. Mount routes
 app.use(require('./routes/auth.routes')(context));
 app.use(require('./routes/users.routes')(context));
-app.use(require('./routes/projects.routes')(context));
-app.use(require('./routes/works.routes')(context));
-app.use(require('./routes/taskPlans.routes')(context));
-app.use(require('./routes/attachments.routes')(context));
+app.use(require('./routes/meetings.routes')(context));
 
 // Health check
 app.get('/api/health', (_req, res) => {
@@ -290,79 +287,6 @@ app.get('/api/health', (_req, res) => {
     cors: allowedOrigins,
   });
 });
-
-// ============================================================
-// DEBUG ENDPOINTS - TẠM THỜI, XÓA SAU KHI FIX XONG
-// ============================================================
-
-// Kiểm tra biến môi trường TEAMS_WEBHOOK_URL có nạp không
-app.get('/api/debug-env', (req, res) => {
-  const url = process.env.TEAMS_WEBHOOK_URL || '';
-  const smtpHost = process.env.SMTP_HOST || '';
-  const smtpUser = process.env.SMTP_USER || '';
-
-  res.json({
-    nodeEnv: NODE_ENV,
-    teams: {
-      hasUrl: !!url,
-      length: url.length,
-      firstChars: url.substring(0, 60),
-      lastChars: url.substring(url.length - 30),
-      hasPathsKeyword: url.includes('/paths/invoke'),
-    },
-    smtp: {
-      hasHost: !!smtpHost,
-      host: smtpHost,
-      hasUser: !!smtpUser,
-      user: smtpUser,
-    },
-    managerEmails: process.env.MANAGER_NOTIFY_EMAILS || '(chưa set)',
-  });
-});
-
-// Test gửi webhook Teams từ chính Render
-app.get('/api/test-teams', async (req, res) => {
-  const url = process.env.TEAMS_WEBHOOK_URL;
-  if (!url) {
-    return res.status(500).json({ error: 'TEAMS_WEBHOOK_URL is undefined' });
-  }
-
-  try {
-    const r = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text: 'Test từ Render - Digital Work' }),
-    });
-    const body = await r.text();
-    res.json({
-      status: r.status,
-      ok: r.ok,
-      body: body.substring(0, 500),
-    });
-  } catch (e) {
-    res.status(500).json({
-      error: e.message,
-      stack: e.stack?.substring(0, 500),
-    });
-  }
-});
-
-// Test gửi email qua SMTP
-app.get('/api/test-email', async (req, res) => {
-  try {
-    const result = await notificationService.sendTestEmail();
-    res.json({ ok: true, result });
-  } catch (e) {
-    res.status(500).json({
-      error: e.message,
-      stack: e.stack?.substring(0, 500),
-    });
-  }
-});
-
-// ============================================================
-// END DEBUG ENDPOINTS
-// ============================================================
 
 // Dev-only test DB
 if (!IS_PROD_LIKE) {

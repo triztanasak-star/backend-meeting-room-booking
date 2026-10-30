@@ -1,4 +1,4 @@
--- 006_create_activity_logs.sql
+-- 007_create_activity_logs.sql
 -- Ghi lai moi thao tac tao/sua/xoa/dang nhap.
 
 CREATE TABLE IF NOT EXISTS "activity_logs" (

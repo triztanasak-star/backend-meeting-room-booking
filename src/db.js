@@ -1,5 +1,5 @@
 const { Pool } = require('pg');
-require('dotenv').config();
+require('dotenv').config({ path: require('node:path').join(__dirname, '../.env') });
 
 const toInt = (value, fallback) => {
   const parsed = Number.parseInt(value, 10);
@@ -36,6 +36,7 @@ const isUniqueViolation = (error) => error?.code === '23505';
 const isForeignKeyViolation = (error) => error?.code === '23503';
 
 module.exports = {
+  end: () => pool.end(),
   query: (text, params) => pool.query(text, params),
   withTransaction,
   isUniqueViolation,
