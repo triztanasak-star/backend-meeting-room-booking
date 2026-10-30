@@ -277,6 +277,7 @@ const context = {
 app.use(require('./routes/auth.routes')(context));
 app.use(require('./routes/users.routes')(context));
 app.use(require('./routes/meetings.routes')(context));
+app.use(require('./routes/vehicles.routes')(context));
 
 // Health check
 app.get('/api/health', (_req, res) => {
