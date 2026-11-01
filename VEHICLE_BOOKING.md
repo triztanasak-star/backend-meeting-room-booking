@@ -14,7 +14,7 @@ Mở `/vehicles` hoặc menu **Đặt xe nhà máy**.
 
 1. Admin vào **Danh mục xe**, thêm mỗi xe thực tế với tên và biển số. Tổng số xe khả dụng là số xe đang hoạt động.
 2. Admin thêm **Tài xế** và chọn tài khoản trong **Người duyệt**. Admin luôn có quyền duyệt.
-3. Người dùng chọn ngày, xem tổng xe/còn trống, nhập số lượng xe, điểm đến, mục đích và điện thoại.
+3. Người dùng chọn ngày, xem tổng xe/còn trống, nhập số lượng xe, điểm xuất phát, thời gian xuất phát, điểm đến, mục đích và điện thoại. Giờ xuất phát thuộc ngày đặt xe đã chọn; xe vẫn được giữ chỗ trọn ngày.
 4. Người duyệt chọn ngày để xem mọi yêu cầu, phân đủ xe và tài xế rồi duyệt; hoặc từ chối kèm lý do.
 
 Mỗi yêu cầu chiếm xe trọn một ngày. Chờ duyệt và đã duyệt đều giữ số lượng xe; từ chối/hủy trả lại chỗ. Xe hoặc tài xế không được phân vào hai yêu cầu đã duyệt cùng ngày. Khi thiếu tài xế, yêu cầu vẫn được giữ chỗ xe nhưng chưa thể duyệt cho đến khi phân đủ tài xế.

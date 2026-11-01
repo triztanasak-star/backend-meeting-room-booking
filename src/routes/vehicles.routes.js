@@ -44,13 +44,26 @@ module.exports = ({ db, authMiddleware, requireAdmin, handleServerError, logActi
     const drivers = canManage ? (await db.query(`SELECT d.*, EXISTS(SELECT 1 FROM vehicle_assignments a JOIN vehicle_bookings b ON b.id=a.booking_id WHERE a.driver_id=d.id AND b.booking_date=$1 AND b.status='approved') AS busy FROM vehicle_drivers d ORDER BY d.id`,[date])).rows : [];
     res.json({today:todayVN(),can_manage:canManage,...await availability(db,date),bookings,fleet,drivers});
   }));
+  r.get('/api/vehicles/bookings',route(async(req,res)=>{
+    const canManage=await manager(db,req.user);
+    if(!canManage && req.user.role!=='manager') fail('Bạn không có quyền xem quản lý đặt xe.',403);
+    const from=req.query.from || todayVN(), to=req.query.to || from;
+    const span=dayNumber(to)-dayNumber(from);
+    if(span<0 || span>365) fail('Khoảng xem tối đa 366 ngày.');
+    const {rows}=await db.query(`SELECT b.*,b.booking_date::text,u.name AS creator_name,
+      COALESCE((SELECT json_agg(json_build_object('vehicle_id',a.vehicle_id,'driver_id',a.driver_id,'plate',v.plate,'vehicle_name',v.name,'driver_name',d.name,'driver_phone',d.phone)) FROM vehicle_assignments a JOIN vehicle_fleet v ON v.id=a.vehicle_id JOIN vehicle_drivers d ON d.id=a.driver_id WHERE a.booking_id=b.id),'[]'::json) AS assignments
+      FROM vehicle_bookings b JOIN users u ON u.id=b.created_by
+      WHERE b.booking_date BETWEEN $1 AND $2 AND ($3::boolean OR b.created_by=$4)
+      ORDER BY b.booking_date,b.departure_time NULLS LAST,b.id DESC`,[from,to,canManage,req.user.id]);
+    res.json(rows);
+  }));
   r.post('/api/vehicles/bookings',route(async(req,res)=>{
     validateRequest(req.body);
     const b=req.body;
     const result=await db.withTransaction(async c=>{
       await lock(c);
       if(b.quantity > (await availability(c,b.booking_date)).remaining) fail('Không còn đủ xe trong ngày đã chọn.',409);
-      return (await c.query(`INSERT INTO vehicle_bookings(created_by,booking_date,quantity,destination,purpose,phone) VALUES($1,$2,$3,$4,$5,$6) RETURNING *`,[req.user.id,b.booking_date,b.quantity,b.destination.trim(),b.purpose.trim(),b.phone.trim()])).rows[0];
+      return (await c.query(`INSERT INTO vehicle_bookings(created_by,booking_date,quantity,destination,purpose,phone,departure_point,departure_time) VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,[req.user.id,b.booking_date,b.quantity,b.destination.trim(),b.purpose.trim(),b.phone.trim(),b.departure_point.trim(),b.departure_time])).rows[0];
     });
     await logActivity(req,'BOOK_VEHICLE',result.id); res.status(201).json(result);
   }));
