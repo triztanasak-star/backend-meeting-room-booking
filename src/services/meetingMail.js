@@ -7,20 +7,20 @@ async function flush() {
   running = true;
   try {
     if (process.env.TEAMS_WEBHOOK_URL) {
-      await db.withTransaction(async (c) => {
+      for (const table of ["meeting_teams_outbox", "vehicle_teams_outbox"]) await db.withTransaction(async (c) => {
         const { rows } = await c.query(
-          "SELECT * FROM meeting_teams_outbox WHERE sent_at IS NULL AND attempts < 5 ORDER BY id LIMIT 10 FOR UPDATE SKIP LOCKED",
+          `SELECT * FROM ${table} WHERE sent_at IS NULL AND attempts < 5 ORDER BY id LIMIT 10 FOR UPDATE SKIP LOCKED`,
         );
         for (const message of rows) {
           const result = await sendTeamsMessage(message.subject, message.body);
           if (result.ok) {
             await c.query(
-              "UPDATE meeting_teams_outbox SET sent_at=NOW(),attempts=attempts+1,last_error=NULL WHERE id=$1",
+              `UPDATE ${table} SET sent_at=NOW(),attempts=attempts+1,last_error=NULL WHERE id=$1`,
               [message.id],
             );
           } else {
             await c.query(
-              "UPDATE meeting_teams_outbox SET attempts=attempts+1,last_error=$2 WHERE id=$1",
+              `UPDATE ${table} SET attempts=attempts+1,last_error=$2 WHERE id=$1`,
               [message.id, String(result.error || result.body || result.reason || `HTTP ${result.status}`).slice(0, 500)],
             );
           }
@@ -43,9 +43,9 @@ async function flush() {
           }
         : undefined,
     });
-    await db.withTransaction(async (c) => {
+    for (const table of ["meeting_email_outbox", "vehicle_email_outbox"]) await db.withTransaction(async (c) => {
       const { rows } = await c.query(
-        "SELECT * FROM meeting_email_outbox WHERE sent_at IS NULL AND attempts < 5 ORDER BY id LIMIT 10 FOR UPDATE SKIP LOCKED",
+        `SELECT * FROM ${table} WHERE sent_at IS NULL AND attempts < 5 ORDER BY id LIMIT 10 FOR UPDATE SKIP LOCKED`,
       );
       for (const mail of rows) {
         try {
@@ -56,12 +56,12 @@ async function flush() {
             text: mail.body,
           });
           await c.query(
-            "UPDATE meeting_email_outbox SET sent_at=NOW(),attempts=attempts+1,last_error=NULL WHERE id=$1",
+            `UPDATE ${table} SET sent_at=NOW(),attempts=attempts+1,last_error=NULL WHERE id=$1`,
             [mail.id],
           );
         } catch (e) {
           await c.query(
-            "UPDATE meeting_email_outbox SET attempts=attempts+1,last_error=$2 WHERE id=$1",
+            `UPDATE ${table} SET attempts=attempts+1,last_error=$2 WHERE id=$1`,
             [mail.id, String(e.message).slice(0, 500)],
           );
         }

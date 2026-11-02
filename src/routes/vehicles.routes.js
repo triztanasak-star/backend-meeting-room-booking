@@ -1,4 +1,5 @@
 const express = require('express');
+const { notifyVehicle } = require('../services/vehicleNotifications');
 const { fail, dayNumber, todayVN } = require('../services/bookingRules');
 const { validateRequest, validateAssignments } = require('../services/vehicleRules');
 module.exports = ({ db, authMiddleware, requireAdmin, handleServerError, logActivity }) => {
@@ -63,7 +64,9 @@ module.exports = ({ db, authMiddleware, requireAdmin, handleServerError, logActi
     const result=await db.withTransaction(async c=>{
       await lock(c);
       if(b.quantity > (await availability(c,b.booking_date)).remaining) fail('Không còn đủ xe trong ngày đã chọn.',409);
-      return (await c.query(`INSERT INTO vehicle_bookings(created_by,booking_date,quantity,destination,purpose,phone,departure_point,departure_time) VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,[req.user.id,b.booking_date,b.quantity,b.destination.trim(),b.purpose.trim(),b.phone.trim(),b.departure_point.trim(),b.departure_time])).rows[0];
+      const booking = (await c.query(`INSERT INTO vehicle_bookings(created_by,booking_date,quantity,destination,purpose,phone,departure_point,departure_time) VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *,booking_date::text`,[req.user.id,b.booking_date,b.quantity,b.destination.trim(),b.purpose.trim(),b.phone.trim(),b.departure_point.trim(),b.departure_time])).rows[0];
+      await notifyVehicle(c, booking);
+      return booking;
     });
     await logActivity(req,'BOOK_VEHICLE',result.id); res.status(201).json(result);
   }));
@@ -87,7 +90,9 @@ module.exports = ({ db, authMiddleware, requireAdmin, handleServerError, logActi
           await c.query('INSERT INTO vehicle_assignments(booking_id,vehicle_id,driver_id) VALUES($1,$2,$3)',[b.id,a.vehicle_id,a.driver_id]);
         }
       }
-      return (await c.query('UPDATE vehicle_bookings SET status=$2,reason=$3,reviewed_by=$4,updated_at=NOW() WHERE id=$1 RETURNING *',[b.id,{approve:'approved',reject:'rejected',cancel:'cancelled'}[action],action==='approve'?null:reason.trim(),req.user.id])).rows[0];
+      const booking = (await c.query('UPDATE vehicle_bookings SET status=$2,reason=$3,reviewed_by=$4,updated_at=NOW() WHERE id=$1 RETURNING *,booking_date::text',[b.id,{approve:'approved',reject:'rejected',cancel:'cancelled'}[action],action==='approve'?null:reason.trim(),req.user.id])).rows[0];
+      await notifyVehicle(c, booking);
+      return booking;
     });
     await logActivity(req,'VEHICLE_'+action.toUpperCase(),result.id); res.json(result);
   }));

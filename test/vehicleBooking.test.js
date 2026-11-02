@@ -5,6 +5,25 @@ const routes = require('../src/routes/vehicles.routes');
 const { validateRequest, validateAssignments } = require('../src/services/vehicleRules');
 const { todayVN } = require('../src/services/bookingRules');
 const payload = {booking_date:todayVN(),quantity:1,departure_point:'Office',departure_time:'07:30',destination:'Factory',purpose:'Visit',phone:'0901234567'};
+
+test('all vehicle statuses enqueue Teams and email with deduplicated recipients', async () => {
+  const { notifyVehicle } = require('../src/services/vehicleNotifications');
+  for (const status of ['pending','approved','rejected','cancelled']) {
+    const writes = [];
+    const c = { query: async (sql, params) => {
+      if (sql.startsWith('SELECT email')) return { rows: [{email:'owner@example.test'}, {email:'owner@example.test'}, {email:'approver@example.test'}] };
+      if (sql.startsWith('SELECT v.plate')) return { rows: [{plate:'51A-12345',name:'Car',driver_name:'Driver',driver_phone:'0901234567'}] };
+      writes.push({sql,params}); return {rows:[]};
+    } };
+    await notifyVehicle(c, {...payload,id:7,created_by:1,status,reason:status==='rejected' || status==='cancelled' ? 'Changed plans' : null});
+    assert.equal(writes.length,2);
+    assert.match(writes[0].sql,/vehicle_teams_outbox/);
+    assert.match(writes[0].params[2],/51A-12345/);
+    assert.match(writes[1].sql,/vehicle_email_outbox/);
+    assert.deepEqual(writes[1].params[1],['owner@example.test','approver@example.test']);
+    if (status==='rejected' || status==='cancelled') assert.match(writes[0].params[2],/Changed plans/);
+  }
+});
 test('management list restricts users and scopes unassigned managers to their own requests',async()=>{
   for(const role of ['user','manager','admin']) {
     let listed=false;
@@ -61,6 +80,7 @@ test('booking creation persists departure information',async()=>{
   const db={withTransaction:fn=>fn({query:async(sql,params)=>{
     if(sql.includes('pg_advisory')) return {rows:[]};
     if(sql.includes('AS total')) return {rows:[{total:2,reserved:0}]};
+    if(!sql.includes('INSERT INTO vehicle_bookings')) return {rows:[]};
     assert.match(sql,/departure_point,departure_time/);
     assert.deepEqual(params.slice(6),['Office','07:30']);
     return {rows:[{id:1,departure_point:params[6],departure_time:params[7]}]};
@@ -75,6 +95,7 @@ test('concurrent requests cannot exceed the fleet capacity',async()=>{
   const c={query:async sql=>{
     if(sql.includes('pg_advisory')) return {rows:[]};
     if(sql.includes('AS total')) return {rows:[{total:1,reserved}]};
+    if(!sql.includes('INSERT INTO vehicle_bookings')) return {rows:[]};
     assert.match(sql,/INSERT INTO vehicle_bookings/); reserved++; return {rows:[{id:reserved}]};
   }};
   const db={withTransaction:fn=>{

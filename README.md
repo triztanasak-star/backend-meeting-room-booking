@@ -10,6 +10,11 @@ rejected and cancelled notices also include participants. Teams uses the configu
 channel. The worker runs every 60 seconds and retries each channel up to five times
 independently. Delivery errors are stored in each outbox's `last_error` column.
 
+Migration 029 adds vehicle email and Teams outboxes. Vehicle requests enqueue
+notifications on creation (pending), approval, rejection and cancellation. Emails
+go to the creator, administrators and vehicle approvers. Both modules share the
+same Teams webhook and SMTP configuration and the 60-second delivery worker.
+
 See [project setup and business rules](../README.md).
 
 - `npm run migrate`: install the auth baseline and booking schema without removing legacy data.

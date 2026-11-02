@@ -83,7 +83,7 @@ function buildAdaptiveCardPayload(title, text, url) {
             ? [
                 {
                   type: 'Action.OpenUrl',
-                  title: 'Mở hệ thống Digital Work',
+                  title: 'Mở hệ thống meeting room booking',
                   url,
                 },
               ]

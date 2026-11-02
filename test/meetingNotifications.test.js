@@ -35,5 +35,5 @@ test('Teams retries failures independently of SMTP and records success', async (
   assert.equal(updates[0].params[1], 'Unavailable');
   ok = true;
   await flush();
-  assert.match(updates[1].sql, /sent_at=NOW\(\)/);
+  assert.match(updates[2].sql, /sent_at=NOW\(\)/);
 });
