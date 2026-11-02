@@ -11,7 +11,7 @@
     "start": "node src/server.js",
     "migrate": "node scripts/migrateMeetings.js",
     "migrate:vehicles": "node scripts/migrateVehicles.js",
-    "test": "node --test test/bookingRules.test.js test/vehicleBooking.test.js",
+    "test": "node --test test/bookingRules.test.js test/vehicleBooking.test.js test/meetingNotifications.test.js",
     "test:integration": "node --test test/meetingPostgres.test.js"
   },
   "dependencies": {

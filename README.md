@@ -1,5 +1,15 @@
 # Meeting Room Booking backend
 
+Meeting notifications: run `npm run migrate` to install migration 028, then restart
+the backend. Set `TEAMS_WEBHOOK_URL` to the Microsoft Teams Workflow webhook for
+the target channel. Configure `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`,
+`SMTP_PASS` (or `SMTP_PASSWORD`) and `SMTP_FROM` in `backend/.env`.
+Pending, approved, rejected and cancelled bookings enqueue both channels in the
+booking transaction. Email goes to the creator and floor administrators; approved,
+rejected and cancelled notices also include participants. Teams uses the configured
+channel. The worker runs every 60 seconds and retries each channel up to five times
+independently. Delivery errors are stored in each outbox's `last_error` column.
+
 See [project setup and business rules](../README.md).
 
 - `npm run migrate`: install the auth baseline and booking schema without removing legacy data.

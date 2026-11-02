@@ -61,14 +61,20 @@ module.exports = ({
         ...(status === "pending" ? [] : b.participants),
       ]),
     ].filter(Boolean);
+    const subject = "Meeting Room Booking · " + labels[status];
+    const body = `${message}\n${String(b.start_date).slice(0, 10)} – ${String(b.end_date).slice(0, 10)}\n${b.start_time} – ${b.end_time}\nPhụ trách: ${b.incharge}\nĐiện thoại: ${b.phone}\nGhi chú: ${b.note}`;
+    await c.query(
+      "INSERT INTO meeting_teams_outbox(booking_id,subject,body) VALUES ($1,$2,$3)",
+      [b.id, subject, body],
+    );
     if (recipients.length)
       await c.query(
         "INSERT INTO meeting_email_outbox(booking_id,recipients,subject,body) VALUES ($1,$2,$3,$4)",
         [
           b.id,
           recipients,
-          "Meeting Room Booking · " + labels[status],
-          `${message}\n${String(b.start_date).slice(0, 10)} – ${String(b.end_date).slice(0, 10)}\n${b.start_time} – ${b.end_time}\nPhụ trách: ${b.incharge}\nĐiện thoại: ${b.phone}\nGhi chú: ${b.note}`,
+          subject,
+          body,
         ],
       );
   }

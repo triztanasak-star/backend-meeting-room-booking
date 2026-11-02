@@ -110,6 +110,7 @@ async function sendTeamsMessage(title, text, url = null) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(buildAdaptiveCardPayload(title, text, appUrl)),
+      signal: AbortSignal.timeout(15000),
     });
 
     const responseBody = await response.text().catch(() => '');
