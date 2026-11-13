@@ -21,6 +21,26 @@ const base = {
 };
 const validate = (patch = {}, r = room, floor = 2) =>
   validateBooking({ ...base, ...patch }, r, floor, "2030-01-01");
+test("minimum notice rejects early bookings and accepts the exact boundary for every room", () => {
+  for (const floor of [2, 3]) {
+    const check = patch => validateBooking({...base, ...patch}, room, floor, '2030-01-01', null, {minimum_notice_days: 2});
+    assert.throws(() => check({}), /2/);
+    assert.doesNotThrow(() => check({start_date:'2030-01-03', end_date:'2030-01-03'}));
+    assert.doesNotThrow(() => check({start_date:'2031-01-03', end_date:'2031-01-03'}));
+  }
+});
+test("unrestricted bookings remove the old window but still reject past dates", () => {
+  const check = patch => validateBooking({...base, ...patch}, room, 3, '2030-01-01', null, {minimum_notice_days: 0});
+  assert.doesNotThrow(() => check({start_date:'2030-01-01', end_date:'2030-01-01'}));
+  assert.doesNotThrow(() => check({start_date:'2031-01-01', end_date:'2031-01-01'}));
+  assert.throws(() => check({start_date:'2029-12-31', end_date:'2029-12-31'}));
+});
+test("existing unchanged meetings can be edited after a notice increase", () => {
+  const input = {...base, room_id: 1};
+  const previous = {room_id: 1, start_date: base.start_date, start_time:'08:00:00'};
+  assert.doesNotThrow(() => validateBooking(input, room, 2, '2030-01-01', previous, {minimum_notice_days: 10}));
+  assert.throws(() => validateBooking({...input, start_time:'08:30'}, room, 2, '2030-01-01', previous, {minimum_notice_days: 10}));
+});
 test("ongoing multi-day bookings may extend without changing the original start", () => {
   const input = {...base, room_id:1, mode:'multiple', start_date:'2029-12-31', end_date:'2030-01-02', start_time:'07:30', end_time:'17:30'};
   const previous = {room_id:1, start_date:'2029-12-31', start_time:'07:30:00'};
@@ -142,6 +162,24 @@ async function request(
     await new Promise((resolve) => server.close(resolve));
   }
 }
+test("administrator can save notice days including unrestricted mode", async () => {
+  for (const days of [0, 2, 3650]) {
+    const db = {query: async (sql, params) => {
+      assert.match(sql, /UPDATE meeting_booking_settings/);
+      assert.deepEqual(params, [days]);
+      return {rows: [{minimum_notice_days: days}]};
+    }};
+    const result = await request(db, {minimum_notice_days: days}, '/api/meeting/booking-settings', 'PUT', {id:1, role:'admin'});
+    assert.equal(result.status, 200);
+    assert.equal(result.body.minimum_notice_days, days);
+  }
+});
+test("notice settings reject invalid values before database access", async () => {
+  for (const days of [-1, 1.5, 3651, '2', null]) {
+    const result = await request({}, {minimum_notice_days: days}, '/api/meeting/booking-settings', 'PUT', {id:1, role:'admin'});
+    assert.equal(result.status, 400);
+  }
+});
 test("administrator can add a room beyond the initial three", async () => {
   const result = await request(
     { withTransaction: async (fn) => fn({ query: async (sql, params) => {
@@ -261,6 +299,8 @@ test("conflicting booking returns 409 and does not insert", async () => {
         return { rows: [{ ...room, id: 1 }] };
       if (sql.includes("SELECT meeting_floor_id"))
         return { rows: [{ meeting_floor_id: 2 }] };
+      if (sql.includes("FROM meeting_booking_settings"))
+        return { rows: [{ minimum_notice_days: 0 }] };
       if (sql.includes("SELECT id FROM meeting_bookings")) {
         assert.match(sql, /INTERVAL '30 minutes'/);
         return { rows: [{ id: 9 }] };

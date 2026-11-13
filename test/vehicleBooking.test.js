@@ -62,6 +62,41 @@ test('vehicle request rejects invalid dates, quantities and missing contacts',()
   validateRequest(payload);
   for(const patch of [{booking_date:'2026-02-30'},{booking_date:'2000-01-01'},{quantity:0},{quantity:1.5},{quantity:'1'},{phone:''},{purpose:' '},{destination:'a'.repeat(501)}]) assert.throws(()=>validateRequest({...payload,...patch}));
 });
+test('vehicle notice period enforces the boundary and unrestricted mode allows today',()=>{
+  const date = new Date(todayVN()+'T12:00:00Z');
+  date.setUTCDate(date.getUTCDate()+2);
+  const later = {...payload, booking_date:date.toISOString().slice(0,10)};
+  assert.doesNotThrow(()=>validateRequest(payload,0));
+  assert.throws(()=>validateRequest(payload,2));
+  assert.doesNotThrow(()=>validateRequest(later,2));
+  assert.throws(()=>validateRequest(later,3));
+});
+test('only administrators may save vehicle notice settings with valid integers',async()=>{
+  for(const days of [0,2,3650,-1,1.5,3651,'2',null]) {
+    const valid=Number.isInteger(days)&&days>=0&&days<=3650;
+    let saved=false;
+    const db={query:async(sql,params)=>{
+      assert.match(sql,/UPDATE vehicle_booking_settings/);
+      assert.deepEqual(params,[days]); saved=true;
+      return {rows:[{minimum_notice_days:days}]};
+    }};
+    const result=await request(db,'/api/vehicles/booking-settings',{minimum_notice_days:days},{id:1,role:'admin'},'PUT');
+    assert.equal(result.status,valid?200:400); assert.equal(saved,valid);
+  }
+  for(const role of ['user','manager']) {
+    const result=await request({},'/api/vehicles/booking-settings',{minimum_notice_days:2},{id:1,role},'PUT');
+    assert.equal(result.status,403);
+  }
+});
+test('vehicle booking endpoint rejects insufficient notice before reserving capacity',async()=>{
+  const db={withTransaction:fn=>fn({query:async(sql)=>{
+    if(sql.includes('pg_advisory')) return {rows:[]};
+    assert.match(sql,/FROM vehicle_booking_settings/);
+    return {rows:[{minimum_notice_days:2}]};
+  }})};
+  const result=await request(db,'/api/vehicles/bookings',payload);
+  assert.equal(result.status,400);
+});
 test('approval requires a distinct vehicle and driver for each requested vehicle',()=>{
   validateAssignments([{vehicle_id:1,driver_id:1},{vehicle_id:2,driver_id:2}],2);
   for(const assignments of [[],[{vehicle_id:1,driver_id:1}], [{vehicle_id:1,driver_id:1},{vehicle_id:1,driver_id:2}],[{vehicle_id:1,driver_id:1},{vehicle_id:2,driver_id:1}], [null,null]]) assert.throws(()=>validateAssignments(assignments,2));
@@ -79,6 +114,7 @@ test('departure fields are required and departure time must be a valid minute of
 test('booking creation persists departure information',async()=>{
   const db={withTransaction:fn=>fn({query:async(sql,params)=>{
     if(sql.includes('pg_advisory')) return {rows:[]};
+    if(sql.includes('FROM vehicle_booking_settings')) return {rows:[{minimum_notice_days:0}]};
     if(sql.includes('AS total')) return {rows:[{total:2,reserved:0}]};
     if(!sql.includes('INSERT INTO vehicle_bookings')) return {rows:[]};
     assert.match(sql,/departure_point,departure_time/);
@@ -94,6 +130,7 @@ test('concurrent requests cannot exceed the fleet capacity',async()=>{
   let reserved=0, sequence=Promise.resolve();
   const c={query:async sql=>{
     if(sql.includes('pg_advisory')) return {rows:[]};
+    if(sql.includes('FROM vehicle_booking_settings')) return {rows:[{minimum_notice_days:0}]};
     if(sql.includes('AS total')) return {rows:[{total:1,reserved}]};
     if(!sql.includes('INSERT INTO vehicle_bookings')) return {rows:[]};
     assert.match(sql,/INSERT INTO vehicle_bookings/); reserved++; return {rows:[{id:reserved}]};
@@ -114,6 +151,7 @@ test('ordinary users cannot approve requests or cancel another owner request',as
 test('approval rejects an already assigned vehicle or driver',async()=>{
   const db={withTransaction:fn=>fn({query:async sql=>{
     if(sql.includes('pg_advisory')) return {rows:[]};
+    if(sql.includes('FROM vehicle_booking_settings')) return {rows:[{minimum_notice_days:0}]};
     if(sql.includes('FOR UPDATE')) return {rows:[{id:9,created_by:2,status:'pending',booking_date:todayVN(),quantity:1}]};
     if(sql.includes('SELECT 1')) return {rows:[{}]};
     throw new Error('Must not insert conflicting assignments');
@@ -131,15 +169,20 @@ test('fleet reduction cannot strand pending reservations',async()=>{
   const result=await request(db,'/api/vehicles/fleet/1',{name:'Car',plate:'ABC',active:false},{id:1,role:'admin'},'PUT');
   assert.equal(result.status,409);
 });
-test('ordinary calendar returns only owned requests and no fleet or driver catalog',async()=>{
+test('ordinary calendar shows vehicle photos and details while keeping requests scoped and drivers private',async()=>{
+  const fleet=[{id:1,name:'Car 1',plate:'SS001',image:'data:image/jpeg;base64,photo',seats:7,active:true}];
   const db={query:async(sql,params)=>{
     if(sql.includes('vehicle_approvers'))return {rows:[]};
     if(sql.includes('AS total'))return {rows:[{total:2,reserved:1}]};
+    if(sql.includes('FROM vehicle_fleet')) {
+      assert.match(sql,/SELECT id,name,plate,image,seats,active FROM vehicle_fleet/);
+      return {rows:fleet};
+    }
     assert.match(sql,/\(\$2::boolean OR b.created_by=\$3\)/);
     assert.deepEqual(params,[todayVN(),false,1]); return {rows:[]};
   }};
   const result=await request(db,'/api/vehicles/day',null,undefined,'GET');
-  assert.equal(result.status,200);assert.equal(result.body.remaining,1);assert.deepEqual(result.body.fleet,[]);assert.deepEqual(result.body.drivers,[]);
+  assert.equal(result.status,200);assert.equal(result.body.remaining,1);assert.deepEqual(result.body.fleet,fleet);assert.deepEqual(result.body.drivers,[]);
 });
 test('weekly calendar returns availability without exposing other users trips',async()=>{
   const db={query:async(sql,params)=>{
@@ -203,5 +246,20 @@ test('only administrators can delete drivers',async()=>{
   const db={withTransaction:()=>{throw new Error('Must not access database');}};
   for(const role of ['user','manager']) {
     assert.equal((await request(db,'/api/vehicles/drivers/7',{}, {id:1,role},'DELETE')).status,403);
+  }
+});
+
+test('personal vehicle list always scopes results to the authenticated user for every role', async () => {
+  for (const role of ['user', 'manager', 'admin']) {
+    let listed = false;
+    const db = { query: async (sql, params) => {
+      listed = true;
+      assert.match(sql, /\(\$3::boolean OR b.created_by=\$4\)/);
+      assert.deepEqual(params, ['2030-01-01', '2030-01-31', false, 7]);
+      return { rows: [] };
+    } };
+    const result = await request(db, '/api/vehicles/bookings?mine=true&from=2030-01-01&to=2030-01-31', null, { id: 7, role }, 'GET');
+    assert.equal(result.status, 200);
+    assert.equal(listed, true);
   }
 });

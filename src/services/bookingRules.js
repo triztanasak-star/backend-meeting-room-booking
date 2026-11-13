@@ -29,6 +29,7 @@ function validateBooking(
   userFloor,
   today = todayVN(),
   existing = null,
+  settings = null,
 ) {
   const start = dayNumber(input.start_date),
     end = dayNumber(input.end_date),
@@ -44,9 +45,11 @@ function validateBooking(
     (start < now && !unchangedStart) ||
     end < now ||
     end < start ||
-    end >= now + days
+    (!settings && end >= now + days)
   )
     fail(`Chỉ được đặt trong ${days} ngày tính từ hôm nay.`);
+  if (settings && !unchangedStart && start < now + settings.minimum_notice_days)
+    fail(`Phải đặt phòng trước ít nhất ${settings.minimum_notice_days} ngày.`);
   if (!["single", "multiple"].includes(input.mode))
     fail("Chọn Single hoặc Multiple day.");
   if (input.mode === "single" && start !== end)

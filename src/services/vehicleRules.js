@@ -1,5 +1,7 @@
 const { fail, dayNumber, todayVN } = require('./bookingRules');
-function validateRequest(b) {
+function validateRequest(b, minimumNoticeDays = 0) {
+  if (minimumNoticeDays > 0 && dayNumber(b.booking_date) < dayNumber(todayVN()) + minimumNoticeDays)
+    fail(`Phải đặt xe trước ít nhất ${minimumNoticeDays} ngày.`);
   if (dayNumber(b.booking_date) < dayNumber(todayVN())) fail('Không thể đặt xe cho ngày đã qua.');
   if (!Number.isInteger(b.quantity) || b.quantity < 1 || b.quantity > 1000) fail('Số lượng xe phải từ 1 đến 1000.');
   if (typeof b.departure_point !== 'string' || !b.departure_point.trim() || b.departure_point.length > 500) fail('Vui lòng nhập điểm xuất phát, tối đa 500 ký tự.');

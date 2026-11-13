@@ -2,7 +2,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const db = require('../src/db');
-const filenames = ['027_vehicle_booking.sql', '028_vehicle_departure.sql'];
+const filenames = ['027_vehicle_booking.sql', '028_vehicle_departure.sql', '030_vehicle_fleet_details.sql', '032_vehicle_booking_settings.sql'];
 async function migrate() {
   await db.withTransaction(async c => {
     await c.query('SELECT pg_advisory_xact_lock(82461102)');

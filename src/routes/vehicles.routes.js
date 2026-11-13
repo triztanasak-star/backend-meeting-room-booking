@@ -15,12 +15,24 @@ module.exports = ({ db, authMiddleware, requireAdmin, handleServerError, logActi
   };
   // All capacity and assignment mutations share this transaction lock across server processes.
   const lock = c => c.query('SELECT pg_advisory_xact_lock(82461104)');
+  const bookingSettings = async (c = db) =>
+    (await c.query('SELECT minimum_notice_days FROM vehicle_booking_settings WHERE id=1')).rows[0];
+  r.get('/api/vehicles/booking-settings', route(async(req,res)=>res.json(await bookingSettings())));
+  r.put('/api/vehicles/booking-settings', requireAdmin, route(async(req,res)=>{
+    const days = req.body.minimum_notice_days;
+    if (!Number.isInteger(days) || days < 0 || days > 3650)
+      fail('Số ngày đặt trước phải là số nguyên từ 0 đến 3650.');
+    const result = await db.query('UPDATE vehicle_booking_settings SET minimum_notice_days=$1 WHERE id=1 RETURNING minimum_notice_days', [days]);
+    res.json(result.rows[0]);
+  }));
   const manager = async (c,u) => u.role === 'admin' || (await c.query('SELECT 1 FROM vehicle_approvers WHERE user_id=$1',[u.id])).rows.length > 0;
   async function availability(c,date) {
     const {rows} = await c.query(`SELECT (SELECT COUNT(*)::int FROM vehicle_fleet WHERE active) AS total,
       COALESCE((SELECT SUM(quantity)::int FROM vehicle_bookings WHERE booking_date=$1 AND status IN ('pending','approved')),0) AS reserved`,[date]);
     return {...rows[0], remaining: Math.max(0,rows[0].total-rows[0].reserved)};
   }
+  r.get('/api/vehicles/drivers',requireAdmin,route(async(req,res)=>{res.json((await db.query('SELECT * FROM vehicle_drivers ORDER BY id')).rows);}));
+  r.get('/api/vehicles/fleet',requireAdmin,route(async(req,res)=>{res.json((await db.query('SELECT * FROM vehicle_fleet ORDER BY id')).rows);}));
   r.get('/api/vehicles/calendar',route(async(req,res)=>{
     const from=req.query.from || todayVN(), to=req.query.to || from;
     if(dayNumber(to)<dayNumber(from) || dayNumber(to)-dayNumber(from)>41) fail('Khoảng xem lịch tối đa 42 ngày.');
@@ -41,13 +53,16 @@ module.exports = ({ db, authMiddleware, requireAdmin, handleServerError, logActi
     const bookings = (await db.query(`SELECT b.*,b.booking_date::text,u.name AS creator_name,
       COALESCE((SELECT json_agg(json_build_object('vehicle_id',a.vehicle_id,'driver_id',a.driver_id,'plate',v.plate,'vehicle_name',v.name,'driver_name',d.name,'driver_phone',d.phone)) FROM vehicle_assignments a JOIN vehicle_fleet v ON v.id=a.vehicle_id JOIN vehicle_drivers d ON d.id=a.driver_id WHERE a.booking_id=b.id),'[]'::json) AS assignments
       FROM vehicle_bookings b JOIN users u ON u.id=b.created_by WHERE b.booking_date=$1 AND ($2::boolean OR b.created_by=$3) ORDER BY b.id DESC`,[date,canManage,req.user.id])).rows;
-    const fleet = canManage ? (await db.query(`SELECT v.*, EXISTS(SELECT 1 FROM vehicle_assignments a JOIN vehicle_bookings b ON b.id=a.booking_id WHERE a.vehicle_id=v.id AND b.booking_date=$1 AND b.status='approved') AS busy FROM vehicle_fleet v ORDER BY v.id`,[date])).rows : [];
+    const fleet = canManage
+      ? (await db.query(`SELECT v.*, EXISTS(SELECT 1 FROM vehicle_assignments a JOIN vehicle_bookings b ON b.id=a.booking_id WHERE a.vehicle_id=v.id AND b.booking_date=$1 AND b.status='approved') AS busy FROM vehicle_fleet v ORDER BY v.id`,[date])).rows
+      : (await db.query('SELECT id,name,plate,image,seats,active FROM vehicle_fleet ORDER BY id')).rows;
     const drivers = canManage ? (await db.query(`SELECT d.*, EXISTS(SELECT 1 FROM vehicle_assignments a JOIN vehicle_bookings b ON b.id=a.booking_id WHERE a.driver_id=d.id AND b.booking_date=$1 AND b.status='approved') AS busy FROM vehicle_drivers d ORDER BY d.id`,[date])).rows : [];
     res.json({today:todayVN(),can_manage:canManage,...await availability(db,date),bookings,fleet,drivers});
   }));
   r.get('/api/vehicles/bookings',route(async(req,res)=>{
-    const canManage=await manager(db,req.user);
-    if(!canManage && req.user.role!=='manager') fail('Bạn không có quyền xem quản lý đặt xe.',403);
+    const mine=req.query.mine==='true';
+    const canManage=mine?false:await manager(db,req.user);
+    if(!mine && !canManage && req.user.role!=='manager') fail('Bạn không có quyền xem quản lý đặt xe.',403);
     const from=req.query.from || todayVN(), to=req.query.to || from;
     const span=dayNumber(to)-dayNumber(from);
     if(span<0 || span>365) fail('Khoảng xem tối đa 366 ngày.');
@@ -63,6 +78,7 @@ module.exports = ({ db, authMiddleware, requireAdmin, handleServerError, logActi
     const b=req.body;
     const result=await db.withTransaction(async c=>{
       await lock(c);
+      validateRequest(b, (await bookingSettings(c)).minimum_notice_days);
       if(b.quantity > (await availability(c,b.booking_date)).remaining) fail('Không còn đủ xe trong ngày đã chọn.',409);
       const booking = (await c.query(`INSERT INTO vehicle_bookings(created_by,booking_date,quantity,destination,purpose,phone,departure_point,departure_time) VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *,booking_date::text`,[req.user.id,b.booking_date,b.quantity,b.destination.trim(),b.purpose.trim(),b.phone.trim(),b.departure_point.trim(),b.departure_time])).rows[0];
       await notifyVehicle(c, booking);
@@ -102,6 +118,10 @@ module.exports = ({ db, authMiddleware, requireAdmin, handleServerError, logActi
     const save=route(async(req,res)=>{
       const b=req.body;
       if(typeof b.name!=='string'||!b.name.trim()||b.name.length>120||typeof b[field]!=='string'||!b[field].trim()||b[field].length>30||typeof b.active!=='boolean') fail('Tên, biển số/điện thoại hoặc trạng thái không hợp lệ.');
+      if(kind==='fleet') {
+        if(b.seats != null && (!Number.isInteger(b.seats) || b.seats<1 || b.seats>100)) fail('Số ghế phải là số nguyên từ 1 đến 100.');
+        if(b.image != null && (typeof b.image!=='string' || b.image.length>180000 || !/^data:image\/jpeg;base64,[A-Za-z0-9+/]+={0,2}$/.test(b.image))) fail('Ảnh xe không hợp lệ.');
+      }
       const result=await db.withTransaction(async c=>{
         await lock(c);
         if(req.params.id) {
@@ -111,8 +131,10 @@ module.exports = ({ db, authMiddleware, requireAdmin, handleServerError, logActi
             if((await c.query(`SELECT 1 FROM vehicle_assignments a JOIN vehicle_bookings b ON b.id=a.booking_id WHERE a.${column}=$1 AND b.status='approved' AND b.booking_date >= $2`,[req.params.id,todayVN()])).rows.length) fail('Hãy hủy lịch đã duyệt trước khi ngừng hoạt động.',409);
             if(kind==='fleet' && (await c.query(`SELECT 1 FROM vehicle_bookings WHERE booking_date >= $1 AND status IN ('pending','approved') GROUP BY booking_date HAVING SUM(quantity) > (SELECT COUNT(*) FROM vehicle_fleet WHERE active AND id<>$2)`,[todayVN(),req.params.id])).rows.length) fail('Số xe còn lại không đủ cho các yêu cầu đang giữ chỗ.',409);
           }
+          if(kind==='fleet') return (await c.query('UPDATE vehicle_fleet SET name=$2,plate=$3,active=$4,seats=$5,image=$6 WHERE id=$1 RETURNING *',[req.params.id,b.name.trim(),b.plate.trim(),b.active,b.seats ?? null,b.image ?? null])).rows[0];
           return (await c.query(`UPDATE ${table} SET name=$2,${field}=$3,active=$4 WHERE id=$1 RETURNING *`,[req.params.id,b.name.trim(),b[field].trim(),b.active])).rows[0];
         }
+        if(kind==='fleet') return (await c.query('INSERT INTO vehicle_fleet(name,plate,active,seats,image) VALUES($1,$2,$3,$4,$5) RETURNING *',[b.name.trim(),b.plate.trim(),b.active,b.seats ?? null,b.image ?? null])).rows[0];
         return (await c.query(`INSERT INTO ${table}(name,${field},active) VALUES($1,$2,$3) RETURNING *`,[b.name.trim(),b[field].trim(),b.active])).rows[0];
       });
       res.status(req.params.id?200:201).json(result);
@@ -144,7 +166,7 @@ module.exports = ({ db, authMiddleware, requireAdmin, handleServerError, logActi
     res.json({ok:true});
   }));
   r.get('/api/vehicles/access',requireAdmin,route(async(req,res)=>{
-    res.json((await db.query(`SELECT u.id,u.name,u.email,EXISTS(SELECT 1 FROM vehicle_approvers a WHERE a.user_id=u.id) AS approver FROM users u WHERE u.status='active' ORDER BY u.name`)).rows);
+    res.json((await db.query(`SELECT u.id,u.name,u.email,u.role,EXISTS(SELECT 1 FROM vehicle_approvers a WHERE a.user_id=u.id) AS approver FROM users u WHERE u.status='active' AND u.role IN ('admin','manager') ORDER BY u.name`)).rows);
   }));
   r.put('/api/vehicles/access/:id',requireAdmin,route(async(req,res)=>{
     if(typeof req.body.approver!=='boolean') fail('Quyền duyệt không hợp lệ.');

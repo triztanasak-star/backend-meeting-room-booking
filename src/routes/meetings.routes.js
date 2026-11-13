@@ -38,6 +38,15 @@ module.exports = ({
         [user.id, floor],
       )
     ).rows.length > 0;
+  const bookingSettings = async (c = db) =>
+    (await c.query("SELECT minimum_notice_days FROM meeting_booking_settings WHERE id=1")).rows[0];
+  r.put("/api/meeting/booking-settings", requireAdmin, route(async (req, res) => {
+    const days = req.body.minimum_notice_days;
+    if (!Number.isInteger(days) || days < 0 || days > 3650)
+      fail("Số ngày đặt trước phải là số nguyên từ 0 đến 3650.");
+    const result = await db.query("UPDATE meeting_booking_settings SET minimum_notice_days=$1 WHERE id=1 RETURNING minimum_notice_days", [days]);
+    res.json(result.rows[0]);
+  }));
   async function notify(c, b, status) {
     const { rows } = await c.query(
       "SELECT id,email FROM users WHERE id=$1 OR id IN (SELECT user_id FROM meeting_floor_admins WHERE floor_id=(SELECT floor_id FROM meeting_rooms WHERE id=$2))",
@@ -101,6 +110,7 @@ module.exports = ({
         home_floor_id: results[3].rows[0]?.meeting_floor_id,
         admin_floor_ids: results[4].rows.map((x) => x.floor_id),
         today: todayVN(),
+        booking_settings: await bookingSettings(),
       });
     }),
   );
@@ -191,6 +201,7 @@ module.exports = ({
         profile.meeting_floor_id,
         todayVN(),
         previous,
+        await bookingSettings(c),
       );
       const conflict = await c.query(
         `SELECT id FROM meeting_bookings b WHERE room_id=$1 AND status IN ('pending','approved') AND ($6::integer IS NULL OR id<>$6)
